@@ -7,8 +7,14 @@ import XTextField from './components/XTextField.vue';
 // Pesquisar -> ref, onMounted, watchEffect -> vue
 
 import { ref, onMounted, watchEffect} from "vue";
-const connectedWallet = ref(null) //  ~= state
+
+const connectedWallet = ref(null) //  ~= state/
 const loading = ref(false);
+const loadingPosts = ref(false);
+const message = ref(null);
+
+const contractAddress = "0xf3F16c13f5b105d070207ca2dE8c3e0e8928a240";
+const contractABI = abi.abi;
 
 const getEthereumObject = () => window.ethereum;
 
@@ -65,6 +71,112 @@ const connectWallet = async() =>{
   }
   loading.value = false;
 }
+
+const createPost = async () =>{
+  loadingPosts.value = true;
+
+  const ethereum = getEthereumObject();
+  if(!ethereum){
+    alert("Instale a extensão do MetaMask!");
+    return;
+  }
+  try{
+    const provider = new ethers.BrowserProvider(windows.ethereum);
+    const signer = await provider.getSigner();
+
+    const xPostContract = new ethers.Contract(
+      contractAddress,
+      contractABI,
+      signer
+    );
+    let count = await xPostContract.getTotalPosts();
+
+    const postTxn = await xPostContract.createPost(message.value, {
+      gasLimit: 300000,
+    });
+
+    console.log("New post...", postTxn.hash);
+
+    count = await xPostContract.getTotalPosts();
+
+  }catch(error){
+    console.error(error);
+  }finally{
+    loadingPosts.value = false;
+  }
+}
+
+const allPosts = ref([]);
+
+const getAllPosts = async () =>{
+  loading.value = true;
+  const ethereum = getEthereumObject();
+
+  if(!ethereum){
+    alert("Instale a extensão do MetaMask!");
+    return;
+  }
+  try{
+    const provider = new ethers.BrowserrProvider(ethereum);
+    const signer = await provider.getSigner();
+    const xPostContract = new ethers.Contract(
+      contractAddress,
+      contractABI,
+      signer
+    );
+    const posts = await xPostContract.getAllPosts();
+    
+    const normalizedPosts = posts.map( (post) =>{
+      return {
+        address: post[0],
+        timestamp: new Date(Number(post[2]) * 1000), //Limit 30 seconds after a newPost by signer
+        message: post[1]
+      }
+    })
+    .sort( (a, b) => {
+      new Date(b.timestamp) - new Date(a.timestamp);
+    }) //filter
+
+    allPosts.value = normalizedPosts;
+  }catch(error){
+  console.error(error); 
+  }
+  loading.value = false;
+}
+
+watchEffect( async (onCleanup) =>{
+  //...
+  let xPostContract;
+
+  const oneNewPost = (address, timestamp, message) =>{
+    try{
+      console.log("Event from NewPost was received:", 
+      {address, timestamp, message})
+      allPosts.value.unshift({
+        address: address,
+        timestamp: timestamp,
+        message: message,
+      })
+    }catch(error){
+      console.error(error)
+    }
+  }
+  if( window.ethereum ) {
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    xPostContract = new ethers.Contract(
+      contractAddress,
+      contractABI,
+      signer
+    );
+    xPostContract.on("NewPost", onNewPost);
+  }
+  onCleanup( () => {
+    if(xPostContract){
+      xPostContract.off("NewPost", onNewPost);
+    }
+  });
+  });
 onMounted( async()=>{
   await findMetamaskAccount();
 })
@@ -100,11 +212,13 @@ onMounted( async()=>{
     </div>
     <div
       class="mt-8 rounded-md border border-gray-700 text-white bg-gray-800 p-6 mx-auto w-full max-w-[600px]"
-      v-if="connectedWallet"
+      v-if="connectedWallet && allPosts?.length > 0"
     >
       <h1 class="text-white text-lg mb-4">Todos os posts</h1>
-      <div class="text-center mb-4">Carregando...</div>
-      <XPost address="123" timestamp="16:54" message="Descrição da mensagem" />
+      <div v-if="loadingPosts" class="text-center mb-4">Carregando...</div>
+      <div v-else>
+        <XPost v-for="post in allPosts" :key="post" :address="post.address" :timestamp="post.timestamp.toString()" :message="post.message" />
+      </div>
     </div>
   </main>
 </template>
